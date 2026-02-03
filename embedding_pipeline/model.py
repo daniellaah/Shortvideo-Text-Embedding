@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
 import logging
+import os
 from contextlib import contextmanager
 
 import torch
-from sentence_transformers import SentenceTransformer
 from huggingface_hub.constants import HF_HUB_CACHE
+from sentence_transformers import SentenceTransformer
 
 log = logging.getLogger(__name__)
 
@@ -14,19 +14,22 @@ log = logging.getLogger(__name__)
 def resolve_device(device_arg: str) -> str:
     """
     Resolve user device choice to a torch device string.
+
+    Default behavior prefers MPS and falls back to CPU when unavailable.
     """
-    device_arg = (device_arg or "auto").lower()
+    device_arg = (device_arg or "mps").lower()
+
     if device_arg == "cpu":
         return "cpu"
-    if device_arg == "mps":
-        if not torch.backends.mps.is_available():
-            raise RuntimeError("MPS requested but torch.backends.mps.is_available() is False")
-        return "mps"
 
-    # auto
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+    if device_arg in {"mps", "auto"}:
+        if torch.backends.mps.is_available():
+            return "mps"
+        if device_arg == "mps":
+            log.warning("MPS requested but unavailable; falling back to CPU.")
+        return "cpu"
+
+    raise ValueError(f"Unsupported device '{device_arg}'. Use one of: mps, cpu, auto.")
 
 
 @contextmanager
@@ -53,49 +56,59 @@ def _hf_offline_mode(enabled: bool):
                 os.environ[k] = v
 
 
-def build_model(model_name: str, *, device: str, local_files_only: bool = False) -> SentenceTransformer:
+def _assert_local_model_available(model_name: str) -> None:
     """
-    Load SentenceTransformer model onto the requested device.
+    Ensure model exists locally. Never download in pipeline runtime.
     """
-    log.info("Loading model: %s (device=%s local_files_only=%s)", model_name, device, local_files_only)
-    if local_files_only and not os.path.exists(model_name) and "/" in model_name:
-        # Fail fast: sentence-transformers may still attempt network HEAD calls even with local_files_only.
-        org, repo = model_name.split("/", 1)
-        expected_repo_cache = os.path.join(HF_HUB_CACHE, f"models--{org}--{repo}")
-        if not os.path.exists(expected_repo_cache):
-            raise RuntimeError(
-                f"Model '{model_name}' not found in Hugging Face cache at {expected_repo_cache}. "
-                "Download it first (or pass a local filesystem path via --model)."
-            )
-    try:
-        with _hf_offline_mode(local_files_only):
-            # sentence-transformers has evolved its constructor API; support both older and newer versions.
-            if local_files_only:
-                try:
-                    return SentenceTransformer(
-                        model_name,
-                        device=device,
-                        model_kwargs={"local_files_only": True},
-                        tokenizer_kwargs={"local_files_only": True},
-                    )
-                except TypeError:
-                    # Fallback: some versions accept local_files_only directly, others don't support it at all.
-                    try:
-                        return SentenceTransformer(model_name, device=device, local_files_only=True)
-                    except TypeError:
-                        log.warning(
-                            "local_files_only not supported by this sentence-transformers version; using offline env only."
-                        )
+    if os.path.exists(model_name):
+        return
 
-            return SentenceTransformer(model_name, device=device)
+    if "/" in model_name:
+        org, repo = model_name.split("/", 1)
+        repo_cache = os.path.join(HF_HUB_CACHE, f"models--{org}--{repo}")
+        snapshots = os.path.join(repo_cache, "snapshots")
+        has_snapshot = os.path.isdir(snapshots) and any(True for _ in os.scandir(snapshots))
+        if has_snapshot:
+            return
+        raise RuntimeError(
+            f"Model '{model_name}' is not available locally. Expected cache under: {repo_cache}. "
+            "Please download the model first, then rerun."
+        )
+
+    raise RuntimeError(
+        f"Model path '{model_name}' does not exist locally. "
+        "Please download the model first, then rerun."
+    )
+
+
+def build_model(model_name: str, *, device: str) -> SentenceTransformer:
+    """
+    Load SentenceTransformer model onto the requested device in strict local-only mode.
+    """
+    log.info("Loading model: %s (device=%s local-only=true)", model_name, device)
+    _assert_local_model_available(model_name)
+
+    try:
+        with _hf_offline_mode(True):
+            # sentence-transformers constructor API differs across versions.
+            try:
+                return SentenceTransformer(
+                    model_name,
+                    device=device,
+                    model_kwargs={"local_files_only": True},
+                    tokenizer_kwargs={"local_files_only": True},
+                )
+            except TypeError:
+                try:
+                    return SentenceTransformer(model_name, device=device, local_files_only=True)
+                except TypeError:
+                    log.warning("local_files_only kwargs not supported; relying on offline mode env.")
+                    return SentenceTransformer(model_name, device=device)
     except Exception as e:
-        if local_files_only:
-            raise RuntimeError(
-                f"Failed to load model '{model_name}' in offline/local-only mode. "
-                "Make sure the model is already downloaded into the local Hugging Face cache "
-                "(or pass a local filesystem path via --model)."
-            ) from e
-        raise
+        raise RuntimeError(
+            f"Failed to load local model '{model_name}'. "
+            "Ensure the model exists locally and is complete."
+        ) from e
 
 
 def move_model_to_cpu(model: SentenceTransformer) -> SentenceTransformer:

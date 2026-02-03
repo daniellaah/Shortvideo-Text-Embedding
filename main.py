@@ -20,20 +20,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Output path (.parquet preferred; .npy also supported). If omitted, auto-uses output/models/<model>/embeddings/.",
     )
     p.add_argument(
-        "--output_root",
-        default="output/models",
-        help="Root output directory used when --output is omitted (default: output/models).",
-    )
-    p.add_argument(
         "--output_format",
         default="parquet",
         choices=["parquet", "npy"],
         help="Output extension used when --output is omitted (default: parquet).",
-    )
-    p.add_argument(
-        "--dataset_name",
-        default="",
-        help="Optional dataset name for auto output filename when --output is omitted.",
     )
     p.add_argument(
         "--backend",
@@ -41,32 +31,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=["local", "openai"],
         help="Embedding backend: local (sentence-transformers) or openai (API).",
     )
-    p.add_argument("--model", default="BAAI/bge-m3", help="Local HF model name/path (default: BAAI/bge-m3).")
+    p.add_argument("--model", default="BAAI/bge-m3", help="Local model path/name (must exist locally).")
     p.add_argument("--openai_model", default="text-embedding-3-small", help="OpenAI embedding model name.")
     p.add_argument("--dimensions", type=int, default=1024, help="OpenAI embedding dimensions (default: 1024).")
     p.add_argument("--batch_size", type=int, default=128, help="Encoding batch size (default: 128).")
     p.add_argument(
         "--device",
-        default="auto",
+        default="mps",
         choices=["auto", "mps", "cpu"],
-        help="Device: auto/mps/cpu (default: auto).",
+        help="Device: mps/auto/cpu (default: mps; falls back to cpu if unavailable).",
     )
-    p.add_argument("--text_col", default="video_title", help="Tabular text column for headered files (default: video_title).")
-    p.add_argument("--id_col", default="video_id", help="Tabular id column for headered files (default: video_id).")
-    p.add_argument("--glob_ext", default=".txt", help="When --input is a directory, read files ending with this ext.")
     p.add_argument(
         "--chunksize",
         type=int,
         default=10_000,
         help="Tabular streaming chunksize (rows per chunk, default: 10000).",
     )
-    p.add_argument(
-        "--local_files_only",
-        action="store_true",
-        help="Only load model files from local cache (no downloads).",
-    )
-    p.add_argument("--openai_api_key", default="", help="OpenAI API key (defaults to env OPENAI_API_KEY).")
-    p.add_argument("--openai_base_url", default="", help="Optional OpenAI base_url (for proxies/self-hosted gateways).")
     p.add_argument("--max_retries", type=int, default=5, help="OpenAI max retries (default: 5).")
     p.add_argument("--clean", action="store_true", help="Apply optional text cleaning rules before embedding.")
     p.add_argument("--clean_rules", default="config/cleaning.json", help="Path to cleaning rules JSON.")
@@ -113,20 +93,13 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     model_name_for_path = args.model if args.backend == "local" else args.openai_model
     output_path = args.output or default_embedding_output_path(
-        output_root=args.output_root,
+        output_root="output/models",
         model_name=model_name_for_path,
         input_path=args.input,
         extension=args.output_format,
-        dataset_name=args.dataset_name,
     )
 
-    total_rows = count_rows(
-        args.input,
-        chunksize=args.chunksize,
-        glob_ext=args.glob_ext,
-        text_col=args.text_col,
-        id_col=args.id_col,
-    )
+    total_rows = count_rows(args.input, chunksize=args.chunksize)
     log.info("Input rows: %d", total_rows)
     log.info("Output path: %s", output_path)
 
@@ -139,7 +112,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.backend == "local":
         from embedding_pipeline.encoder import encode_titles_with_fallback
 
-        model = build_model(args.model, device=device, local_files_only=args.local_files_only)
+        model = build_model(args.model, device=device)
         embed_dim = int(model.get_sentence_embedding_dimension())
     else:
         from embedding_pipeline.openai_backend import OpenAIEmbedder
@@ -149,8 +122,6 @@ def main(argv: Optional[list[str]] = None) -> int:
             dimensions=args.dimensions,
             request_batch_size=args.batch_size,
             max_retries=args.max_retries,
-            api_key=args.openai_api_key or None,
-            base_url=args.openai_base_url or None,
             normalize=args.normalize,
         )
         embed_dim = int(openai_backend.get_sentence_embedding_dimension())
@@ -166,13 +137,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     with tqdm(total=total_rows, desc="Encoding", unit="rows") as pbar:
-        for batch in load_texts(
-            args.input,
-            chunksize=args.chunksize,
-            text_col=args.text_col,
-            id_col=args.id_col,
-            glob_ext=args.glob_ext,
-        ):
+        for batch in load_texts(args.input, chunksize=args.chunksize):
             titles = batch["video_title"]
             ids = batch.get("video_id")
 

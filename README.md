@@ -143,21 +143,16 @@ python data_preprocessing/merge_to_tsv.py \
 - `.parquet` (recommended): columns include `video_title`, `embedding`, and optional `video_id`
 - `.npy`: dense matrix `(N, dim)` only (row order matches input; metadata not stored)
 
-## Device and Offline Notes
+## Device and Model Loading
 
-- `--device auto` uses MPS when available, else CPU
-- local backend can run fully offline if model is already cached
+- `--device` defaults to `mps`; if MPS is unavailable the pipeline falls back to CPU
+- Local backend is strict local-only: if `--model` is missing locally, the run exits with an error
+- Download models yourself ahead of time, then pass a local model path (or a cached model name)
 
-```bash
-export TRANSFORMERS_OFFLINE=1
-export HF_HUB_OFFLINE=1
-```
-
-Optional one-time model download:
+Example local model path:
 
 ```bash
-huggingface-cli download BAAI/bge-m3 --local-dir models/bge-m3
-python main.py --input ... --output ... --model models/bge-m3 --local_files_only
+python main.py --input ... --backend local --model /Users/daboluo/OpenSourceModels/bge-m3
 ```
 
 ## Tests
