@@ -88,13 +88,23 @@ Use `--mode` to choose output style:
 Video-style example:
 
 ```bash
-python tools/sample_ann_neighbors.py   --mode video   --index-dir output/models/bge-m3/ann_index/title_en_index   --embeddings-parquet output/models/bge-m3/embeddings/title_en.parquet   --n 5   --k 10
+python tools/sample_ann_neighbors.py \
+  --mode video \
+  --index-dir output/models/bge-m3/ann_index/title_en_index \
+  --embeddings-parquet output/models/bge-m3/embeddings/title_en.parquet \
+  --n 5 \
+  --k 10
 ```
 
 Text-style example (for category combos):
 
 ```bash
-python tools/sample_ann_neighbors.py   --mode text   --index-dir output/models/bge-m3/ann_index/category_combo_cn_index   --embeddings-parquet output/models/bge-m3/embeddings/category_combo_cn.parquet   --n 5   --k 10
+python tools/sample_ann_neighbors.py \
+  --mode text \
+  --index-dir output/models/bge-m3/ann_index/category_combo_cn_index \
+  --embeddings-parquet output/models/bge-m3/embeddings/category_combo_cn.parquet \
+  --n 5 \
+  --k 10
 ```
 
 Also supports:

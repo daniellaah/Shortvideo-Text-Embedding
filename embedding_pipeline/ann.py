@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+from bisect import bisect_right
 from typing import Any, Dict, List, Sequence
 
 import hnswlib
@@ -123,18 +124,79 @@ def load_manifest(index_dir: str) -> Dict[str, Any]:
         return json.load(f)
 
 
-def load_metadata(index_dir: str) -> Any:
+def _parquet_rowgroup_offsets(pf: pq.ParquetFile) -> List[int]:
+    offsets = [0]
+    s = 0
+    for rg in range(pf.num_row_groups):
+        s += int(pf.metadata.row_group(rg).num_rows)
+        offsets.append(s)
+    return offsets
+
+
+def _rowgroup_for_index(offsets: Sequence[int], index_id: int) -> int:
+    return bisect_right(offsets, index_id) - 1
+
+
+def _load_metadata_rows(
+    index_dir: str,
+    index_ids: Sequence[int],
+    *,
+    columns: Sequence[str],
+) -> Dict[int, Dict[str, Any]]:
+    if not index_ids:
+        return {}
+
     path = os.path.join(index_dir, "metadata.parquet")
-    table = pq.read_table(path)
-    return table.to_pandas()
+    pf = pq.ParquetFile(path)
+    total_rows = int(pf.metadata.num_rows)
+
+    for idx in index_ids:
+        if idx < 0 or idx >= total_rows:
+            raise ValueError(f"metadata index out of range: {idx}")
+
+    available = set(pf.schema_arrow.names)
+    selected_cols = [c for c in columns if c in available]
+    if not selected_cols:
+        return {int(idx): {} for idx in index_ids}
+
+    offsets = _parquet_rowgroup_offsets(pf)
+    by_rg: Dict[int, List[int]] = {}
+    for idx in index_ids:
+        rg = _rowgroup_for_index(offsets, int(idx))
+        by_rg.setdefault(rg, []).append(int(idx))
+
+    out: Dict[int, Dict[str, Any]] = {}
+    for rg, abs_indices in by_rg.items():
+        rg_start = offsets[rg]
+        rel = [i - rg_start for i in abs_indices]
+
+        table = pf.read_row_group(rg, columns=selected_cols)
+        sub = table.take(pa.array(rel, type=pa.int64()))
+
+        for pos, abs_idx in enumerate(abs_indices):
+            row: Dict[str, Any] = {}
+            for col in selected_cols:
+                row[col] = sub[col][pos].as_py()
+            out[abs_idx] = row
+
+    return out
 
 
 def load_embedding_from_parquet(path: str, index_id: int, *, embedding_col: str = "embedding") -> List[float]:
-    table = pq.read_table(path, columns=[embedding_col])
-    df = table.to_pandas()
-    if index_id < 0 or index_id >= len(df):
+    pf = pq.ParquetFile(path)
+    total_rows = int(pf.metadata.num_rows)
+    if index_id < 0 or index_id >= total_rows:
         raise ValueError("index_id out of range")
-    return [float(x) for x in df.iloc[index_id][embedding_col]]
+    if embedding_col not in pf.schema_arrow.names:
+        raise ValueError(f"Missing embedding column: {embedding_col}")
+
+    offsets = _parquet_rowgroup_offsets(pf)
+    rg = _rowgroup_for_index(offsets, int(index_id))
+    rel = int(index_id - offsets[rg])
+
+    table = pf.read_row_group(rg, columns=[embedding_col])
+    vec = table[embedding_col][rel].as_py()
+    return [float(x) for x in vec]
 
 
 def load_embedding_from_file(path: str) -> List[float]:
@@ -197,11 +259,11 @@ def query_ann_index(
     labels = labels[0].tolist()
     distances = distances[0].tolist()
 
-    meta = load_metadata(index_dir)
+    meta_rows = _load_metadata_rows(index_dir, labels, columns=["video_id", "video_title"])
 
     results: List[Dict[str, Any]] = []
     for rank, (idx, dist) in enumerate(zip(labels, distances), start=1):
-        row = meta.iloc[idx]
+        row = meta_rows.get(int(idx), {})
         if space == "cosine":
             score = 1.0 - float(dist)
         else:

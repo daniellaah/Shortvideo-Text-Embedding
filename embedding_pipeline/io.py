@@ -183,15 +183,17 @@ def save_embeddings(
     """
     writer = make_writer(output_path, total_rows=total_rows)
     writer_initialized = False
-    for batch in batches:
-        titles = batch["video_title"]
-        embeddings = batch["embedding"]
-        ids = batch.get("video_id")
+    try:
+        for batch in batches:
+            titles = batch["video_title"]
+            embeddings = batch["embedding"]
+            ids = batch.get("video_id")
 
+            if not writer_initialized:
+                writer.init_if_needed(embedding_dim=embedding_dim, has_ids=ids is not None)
+                writer_initialized = True
+            writer.write_batch(video_titles=titles, embeddings=embeddings, video_ids=ids)  # type: ignore[arg-type]
         if not writer_initialized:
-            writer.init_if_needed(embedding_dim=embedding_dim, has_ids=ids is not None)
-            writer_initialized = True
-        writer.write_batch(video_titles=titles, embeddings=embeddings, video_ids=ids)  # type: ignore[arg-type]
-    if not writer_initialized:
-        writer.init_if_needed(embedding_dim=embedding_dim, has_ids=False)
-    writer.close()
+            writer.init_if_needed(embedding_dim=embedding_dim, has_ids=False)
+    finally:
+        writer.close()

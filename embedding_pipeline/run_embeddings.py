@@ -129,51 +129,51 @@ def main(argv: Optional[list[str]] = None) -> int:
     writer_initialized = False
     written = 0
 
-    if total_rows == 0:
-        # Still create an empty output file with the correct schema/shape.
-        writer.init_if_needed(embedding_dim=embed_dim, has_ids=False)
-        writer.close()
-        log.info("Done. rows=0 dim=%d output=%s seconds=%.2f", embed_dim, output_path, time.time() - t0)
+    try:
+        if total_rows == 0:
+            # Still create an empty output file with the correct schema/shape.
+            writer.init_if_needed(embedding_dim=embed_dim, has_ids=False)
+            log.info("Done. rows=0 dim=%d output=%s seconds=%.2f", embed_dim, output_path, time.time() - t0)
+            return 0
+
+        with tqdm(total=total_rows, desc="Encoding", unit="rows") as pbar:
+            for batch in load_texts(args.input, chunksize=args.chunksize):
+                titles = batch["video_title"]
+                ids = batch.get("video_id")
+
+                if cleaning_rules is not None:
+                    titles = [clean_text(t, cleaning_rules) for t in titles]
+
+                if args.backend == "local":
+                    embeddings, model = encode_titles_with_fallback(
+                        model,
+                        titles,
+                        batch_size=args.batch_size,
+                        embedding_dim=embed_dim,
+                    )
+                else:
+                    embeddings = openai_backend.encode(titles, batch_size=args.batch_size)
+
+                if not writer_initialized:
+                    writer.init_if_needed(embedding_dim=embed_dim, has_ids=ids is not None)
+                    writer_initialized = True
+
+                writer.write_batch(video_titles=titles, embeddings=embeddings, video_ids=ids)
+
+                written += len(titles)
+                pbar.update(len(titles))
+
+        dt = time.time() - t0
+        log.info(
+            "Done. rows=%d dim=%s output=%s seconds=%.2f",
+            written,
+            embed_dim,
+            output_path,
+            dt,
+        )
         return 0
-
-    with tqdm(total=total_rows, desc="Encoding", unit="rows") as pbar:
-        for batch in load_texts(args.input, chunksize=args.chunksize):
-            titles = batch["video_title"]
-            ids = batch.get("video_id")
-
-            if cleaning_rules is not None:
-                titles = [clean_text(t, cleaning_rules) for t in titles]
-
-            if args.backend == "local":
-                embeddings, model = encode_titles_with_fallback(
-                    model,
-                    titles,
-                    batch_size=args.batch_size,
-                    embedding_dim=embed_dim,
-                )
-            else:
-                embeddings = openai_backend.encode(titles, batch_size=args.batch_size)
-
-            if not writer_initialized:
-                writer.init_if_needed(embedding_dim=embed_dim, has_ids=ids is not None)
-                writer_initialized = True
-
-            writer.write_batch(video_titles=titles, embeddings=embeddings, video_ids=ids)
-
-            written += len(titles)
-            pbar.update(len(titles))
-
-    writer.close()
-
-    dt = time.time() - t0
-    log.info(
-        "Done. rows=%d dim=%s output=%s seconds=%.2f",
-        written,
-        embed_dim,
-        output_path,
-        dt,
-    )
-    return 0
+    finally:
+        writer.close()
 
 
 if __name__ == "__main__":

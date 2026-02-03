@@ -25,7 +25,11 @@ def parse_args() -> argparse.Namespace:
         description="Merge per-video text files into a single TSV (video_id<TAB>text)."
     )
     parser.add_argument("--input_dir", default=DEFAULT_INPUT_DIR, help="Input directory containing .txt files")
-    parser.add_argument("--output", default="", help="Output TSV path")
+    parser.add_argument(
+        "--output",
+        default="",
+        help="Output TSV path (default: data/<input_dir_name>.tsv in this repo)",
+    )
     parser.add_argument("--limit", type=int, default=0, help="Only process first N files (0 means no limit)")
     return parser.parse_args()
 
@@ -34,10 +38,10 @@ def main() -> int:
     args = parse_args()
 
     script_dir = Path(__file__).resolve().parent
-    repo_data_dir = script_dir.parent
+    default_data_dir = script_dir.parent / "data"
 
     input_dir = args.input_dir
-    output_path = args.output or str(repo_data_dir / f"{Path(input_dir).name}.tsv")
+    output_path = args.output or str(default_data_dir / f"{Path(input_dir).name}.tsv")
     limit = int(args.limit or 0)
 
     if not os.path.isdir(input_dir):
