@@ -1,15 +1,10 @@
 torch>=2.1
 transformers>=4.40
+huggingface-hub>=0.23
 sentence-transformers>=3.0
 numpy>=1.24
 pandas>=2.0
 tqdm>=4.66
-
-# Optional (recommended for Parquet output)
 pyarrow>=14.0
-
-# Optional (for OpenAI embedding backend)
 openai>=1.0.0
-
-# Optional (for building/querying an ANN index)
 hnswlib>=0.8.0
