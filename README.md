@@ -43,7 +43,7 @@ python data_preprocessing/merge_to_tsv.py \
 python main.py \
   --input data/title_en.tsv \
   --backend local \
-  --model /Users/daboluo/OpenSourceModels/bge-m3 \
+  --model /path/to/bge-m3 \
   --batch_size 128
 ```
 
@@ -172,7 +172,7 @@ python data_preprocessing/merge_to_tsv.py \
 Example local model path:
 
 ```bash
-python main.py --input ... --backend local --model /Users/daboluo/OpenSourceModels/bge-m3
+python main.py --input ... --backend local --model /path/to/bge-m3
 ```
 
 ## Tests
