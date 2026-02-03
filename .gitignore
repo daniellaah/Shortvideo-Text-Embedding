@@ -7,4 +7,6 @@ output/
 models/
 
 # Generated (large) merged ASR TSV
-data/asr_en.txt
+
+# Local datasets (not versioned)
+data/

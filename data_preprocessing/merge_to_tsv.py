@@ -37,7 +37,7 @@ def main() -> int:
     repo_data_dir = script_dir.parent
 
     input_dir = args.input_dir
-    output_path = args.output or str(repo_data_dir / f"{Path(input_dir).name}.txt")
+    output_path = args.output or str(repo_data_dir / f"{Path(input_dir).name}.tsv")
     limit = int(args.limit or 0)
 
     if not os.path.isdir(input_dir):

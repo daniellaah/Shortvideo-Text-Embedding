@@ -12,7 +12,7 @@ Text embedding pipeline for short-video metadata/text, with:
 ├── main.py                          # CLI entrypoint for embedding jobs
 ├── embedding_pipeline/              # Loaders, model backends, writers, ANN tools
 ├── data_preprocessing/              # Data prep scripts
-├── data/                            # Sample data files
+├── data/                            # Local input/output data (gitignored)
 ├── tests/                           # Smoke/unit tests
 └── tools/                           # ANN sampling utilities
 ```
@@ -29,11 +29,11 @@ pip install -r requirements.txt
 
 ### 1) Local embedding (BGE-M3)
 
-This uses bundled sample CSV data and writes parquet embeddings:
+Example with a headered CSV file:
 
 ```bash
 python main.py \
-  --input data/categories_cn_en.csv \
+  --input /path/to/categories_cn_en.csv \
   --text_col category_name_en \
   --id_col category_id \
   --output output/embeddings/category_name_en_bge.parquet \
@@ -47,13 +47,23 @@ python main.py \
 ```bash
 export OPENAI_API_KEY="..."
 python main.py \
-  --input data/categories_cn_en.csv \
+  --input /path/to/categories_cn_en.csv \
   --text_col category_name_en \
   --id_col category_id \
   --output output/embeddings/category_name_en_openai.parquet \
   --backend openai \
   --openai_model text-embedding-3-small \
   --dimensions 1024
+```
+
+### 2b) Local embedding from headerless TSV (`id<TAB>text`)
+
+```bash
+python main.py \
+  --input /path/to/title_en.tsv \
+  --output output/embeddings/title_en_bge.parquet \
+  --backend local \
+  --model BAAI/bge-m3
 ```
 
 ### 3) Build and query ANN index
@@ -73,11 +83,13 @@ python -m embedding_pipeline.query_ann_index \
 ## Input Formats
 
 `main.py` supports:
-- CSV input with a text column (`--text_col`, default `video_title`)
-- optional ID column (`--id_col`, default `video_id`)
+- headered CSV input with a text column (`--text_col`, default `video_title`)
+- headered TSV input with the same column rules
+- headerless TSV/TXT input with exactly 2 columns: `id<TAB>text`
+- optional ID column for headered files (`--id_col`, default `video_id`)
 - directory input where each `.txt` file is one row (ID from file stem)
 
-Note: `data/title_en.txt` and `data/category_combo_cn.tsv` are TSV-like exports, not headered CSV files. Convert/reformat if you want to use them directly with `main.py`.
+Headerless 2-column `id<TAB>text` files (for example `title_en.tsv`, `category_combo_cn.tsv`) are supported directly.
 
 ## Data Preprocessing
 
@@ -89,8 +101,8 @@ Produces a single 2-column TSV file:
 
 ```bash
 python data_preprocessing/generate_category_combinations.py \
-  --input_file data/categories_cn_en.csv \
-  --output_file data/category_combo_en.tsv \
+  --input_file /path/to/categories_cn_en.csv \
+  --output_file /path/to/category_combo_en.tsv \
   --name_col category_name_en
 ```
 
@@ -98,8 +110,8 @@ Use Chinese category names instead:
 
 ```bash
 python data_preprocessing/generate_category_combinations.py \
-  --input_file data/categories_cn_en.csv \
-  --output_file data/category_combo_cn.tsv \
+  --input_file /path/to/categories_cn_en.csv \
+  --output_file /path/to/category_combo_cn.tsv \
   --name_col category_name_cn
 ```
 
@@ -137,5 +149,5 @@ python main.py --input ... --output ... --model models/bge-m3 --local_files_only
 
 ```bash
 python tests/smoke_test.py
-python -m pytest -q tests/test_openai_backend.py
+python -m pytest -q tests/test_data_loader.py tests/test_openai_backend.py
 ```

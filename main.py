@@ -12,7 +12,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--input",
         required=True,
-        help="Input path: CSV (with text column) OR a directory of .txt files (one file per row).",
+        help="Input path: CSV/TSV file (headered, or TSV/TXT id<TAB>text) OR a directory of .txt files (one file per row).",
     )
     p.add_argument(
         "--output",
@@ -35,14 +35,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=["auto", "mps", "cpu"],
         help="Device: auto/mps/cpu (default: auto).",
     )
-    p.add_argument("--text_col", default="video_title", help="CSV text column (default: video_title).")
-    p.add_argument("--id_col", default="video_id", help="CSV id column (default: video_id).")
+    p.add_argument("--text_col", default="video_title", help="Tabular text column for headered files (default: video_title).")
+    p.add_argument("--id_col", default="video_id", help="Tabular id column for headered files (default: video_id).")
     p.add_argument("--glob_ext", default=".txt", help="When --input is a directory, read files ending with this ext.")
     p.add_argument(
         "--chunksize",
         type=int,
         default=10_000,
-        help="CSV streaming chunksize (rows per chunk, default: 10000).",
+        help="Tabular streaming chunksize (rows per chunk, default: 10000).",
     )
     p.add_argument(
         "--local_files_only",
@@ -94,7 +94,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     else:
         log.info("Backend openai selected (device flag ignored).")
 
-    total_rows = count_rows(args.input, chunksize=args.chunksize, glob_ext=args.glob_ext)
+    total_rows = count_rows(
+        args.input,
+        chunksize=args.chunksize,
+        glob_ext=args.glob_ext,
+        text_col=args.text_col,
+        id_col=args.id_col,
+    )
     log.info("Input rows: %d", total_rows)
 
     writer = make_writer(args.output, total_rows=total_rows)

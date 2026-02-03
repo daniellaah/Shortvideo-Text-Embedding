@@ -6,24 +6,105 @@ import re
 from typing import Dict, Iterator, List, Optional
 
 import pandas as pd
+from pandas.errors import EmptyDataError
 
 log = logging.getLogger(__name__)
 
-
-def count_rows_csv(input_path: str, *, chunksize: int = 100_000) -> int:
-    """
-    Count data rows (excluding header) using a streaming CSV read.
-    This avoids issues with quoted newlines that a raw line-count can miss.
-    """
-    n = 0
-    for chunk in pd.read_csv(input_path, chunksize=chunksize, keep_default_na=False):
-        n += len(chunk)
-    return int(n)
+_TSV_LIKE_EXTS = {".tsv", ".txt"}
 
 
 def _natural_key(s: str) -> List[object]:
     # Sort like: 1.txt, 2.txt, 10.txt (instead of 1,10,2).
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
+
+
+def _resolve_tabular_read_kwargs(
+    input_path: str,
+    *,
+    title_col: str,
+    id_col: str,
+) -> Dict[str, object]:
+    """
+    Resolve pandas.read_csv kwargs for file inputs.
+
+    Supported file formats:
+      - Headered CSV (default behavior)
+      - Headered TSV/TXT (tab-separated)
+      - Headerless 2-column TSV/TXT: id<TAB>text
+    """
+    ext = os.path.splitext(input_path)[1].lower()
+
+    # For TSV-like files, support both headered and headerless 2-column data.
+    if ext in _TSV_LIKE_EXTS:
+        try:
+            probe = pd.read_csv(input_path, sep="\t", nrows=1, keep_default_na=False)
+            if title_col in probe.columns:
+                return {"sep": "\t", "header": 0}
+        except EmptyDataError:
+            # Empty file: keep TSV parsing settings; row iteration will return 0 rows.
+            pass
+
+        # Fallback: headerless 2-column TSV/TXT (id, text).
+        return {
+            "sep": "\t",
+            "header": None,
+            "names": [id_col, title_col],
+            "usecols": [0, 1],
+        }
+
+    # CSV (comma-separated) with header.
+    return {}
+
+
+def _iter_tabular_chunks(
+    input_path: str,
+    *,
+    chunksize: int,
+    title_col: str,
+    id_col: str,
+) -> Iterator[pd.DataFrame]:
+    kwargs = _resolve_tabular_read_kwargs(input_path, title_col=title_col, id_col=id_col)
+
+    try:
+        reader = pd.read_csv(
+            input_path,
+            chunksize=chunksize,
+            keep_default_na=False,
+            **kwargs,
+        )
+        for chunk in reader:
+            yield chunk
+    except EmptyDataError:
+        return
+    except ValueError as e:
+        # Improve error message for malformed headerless TSV/TXT inputs.
+        if kwargs.get("header") is None and kwargs.get("sep") == "\t":
+            raise ValueError(
+                f"Failed to parse '{input_path}' as headerless TSV/TXT id-text format. "
+                "Expected 2 columns: id<TAB>text."
+            ) from e
+        raise
+
+
+def count_rows_csv(
+    input_path: str,
+    *,
+    chunksize: int = 100_000,
+    title_col: str = "video_title",
+    id_col: str = "video_id",
+) -> int:
+    """
+    Count data rows using streaming tabular reads.
+    """
+    n = 0
+    for chunk in _iter_tabular_chunks(
+        input_path,
+        chunksize=chunksize,
+        title_col=title_col,
+        id_col=id_col,
+    ):
+        n += len(chunk)
+    return int(n)
 
 
 def count_rows_dir(input_dir: str, *, glob_ext: str = ".txt") -> int:
@@ -89,17 +170,19 @@ def load_titles(
     id_col: str = "video_id",
 ) -> Iterator[Dict[str, object]]:
     """
-    Stream input CSV in chunks. Yields dicts:
+    Stream input tabular file in chunks. Yields dicts:
       - video_title: list[str]
       - video_id: Optional[list[object]] (only if present)
 
     Does not modify text content beyond converting nulls to empty strings.
     """
-    # keep_default_na=False preserves empty strings instead of turning them into NaN.
-    reader = pd.read_csv(input_path, chunksize=chunksize, keep_default_na=False)
-
     first = True
-    for chunk in reader:
+    for chunk in _iter_tabular_chunks(
+        input_path,
+        chunksize=chunksize,
+        title_col=title_col,
+        id_col=id_col,
+    ):
         if first:
             if title_col not in chunk.columns:
                 raise ValueError(f"Missing required column '{title_col}' in {input_path}")
@@ -118,10 +201,22 @@ def load_titles(
         yield out
 
 
-def count_rows(input_path: str, *, chunksize: int = 100_000, glob_ext: str = ".txt") -> int:
+def count_rows(
+    input_path: str,
+    *,
+    chunksize: int = 100_000,
+    glob_ext: str = ".txt",
+    text_col: str = "video_title",
+    id_col: str = "video_id",
+) -> int:
     if os.path.isdir(input_path):
         return count_rows_dir(input_path, glob_ext=glob_ext)
-    return count_rows_csv(input_path, chunksize=chunksize)
+    return count_rows_csv(
+        input_path,
+        chunksize=chunksize,
+        title_col=text_col,
+        id_col=id_col,
+    )
 
 
 def load_texts(
@@ -135,7 +230,7 @@ def load_texts(
     """
     Unified loader:
       - if input_path is a directory -> read *.txt files
-      - else -> treat as CSV and stream with pandas
+      - else -> treat as tabular file (CSV/TSV)
     """
     if os.path.isdir(input_path):
         return load_texts_from_dir(input_path, chunksize=chunksize, glob_ext=glob_ext)
