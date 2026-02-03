@@ -12,6 +12,13 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from .paths import (
+    default_ann_index_output_dir,
+    infer_dataset_slug_from_embeddings_path,
+    infer_model_slug_from_embeddings_path,
+    model_slug,
+)
+
 
 def _infer_dim(col: pa.ChunkedArray) -> int:
     # pyarrow.ChunkedArray.combine_chunks() returns an Array.
@@ -47,7 +54,26 @@ def _to_numpy_2d(col: pa.ChunkedArray, *, dim: int) -> np.ndarray:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build ANN index (HNSW) from embeddings parquet.")
     parser.add_argument("--input", required=True, help="Path to embeddings parquet")
-    parser.add_argument("--output-dir", required=True, help="Output directory (e.g. output/ann_index/run_001)")
+    parser.add_argument(
+        "--output-dir",
+        default="",
+        help="Output directory. If omitted, auto-uses output/models/<model>/ann_index/<dataset>_index.",
+    )
+    parser.add_argument(
+        "--output_root",
+        default="output/models",
+        help="Root output directory used when --output-dir is omitted (default: output/models).",
+    )
+    parser.add_argument(
+        "--model_name",
+        default="",
+        help="Optional model name for auto output directory (e.g. BAAI/bge-m3).",
+    )
+    parser.add_argument(
+        "--dataset_name",
+        default="",
+        help="Optional dataset name for auto output directory.",
+    )
     parser.add_argument("--embedding-col", default="embedding")
     parser.add_argument("--space", default="cosine", choices=["cosine", "l2"], help="Distance space")
     parser.add_argument("--M", type=int, default=16, help="HNSW M parameter")
@@ -55,7 +81,21 @@ def main() -> int:
     parser.add_argument("--ef-search", type=int, default=200)
     args = parser.parse_args()
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    if args.output_dir:
+        output_dir = args.output_dir
+    else:
+        model_name_for_path = args.model_name or infer_model_slug_from_embeddings_path(args.input)
+        if model_name_for_path == "unknown-model":
+            model_name_for_path = "unknown-model"
+        dataset_name = args.dataset_name or infer_dataset_slug_from_embeddings_path(args.input)
+        output_dir = default_ann_index_output_dir(
+            output_root=args.output_root,
+            model_name=model_slug(model_name_for_path),
+            embeddings_path=args.input,
+            dataset_name=dataset_name,
+        )
+
+    os.makedirs(output_dir, exist_ok=True)
 
     pf = pq.ParquetFile(args.input)
     n = int(pf.metadata.num_rows)
@@ -73,7 +113,7 @@ def main() -> int:
 
     # Write metadata.parquet incrementally (all columns except embedding).
     meta_writer = None
-    meta_path = os.path.join(args.output_dir, "metadata.parquet")
+    meta_path = os.path.join(output_dir, "metadata.parquet")
 
     offset = 0
     for rg in range(pf.num_row_groups):
@@ -99,12 +139,12 @@ def main() -> int:
 
     index.set_ef(args.ef_search)
 
-    index_path = os.path.join(args.output_dir, "index.bin")
+    index_path = os.path.join(output_dir, "index.bin")
     index.save_index(index_path)
 
     manifest = {
         "input": os.path.abspath(args.input),
-        "output_dir": os.path.abspath(args.output_dir),
+        "output_dir": os.path.abspath(output_dir),
         "embedding_col": args.embedding_col,
         "space": args.space,
         "dimensions": dim,
@@ -116,7 +156,7 @@ def main() -> int:
         "index_file": "index.bin",
         "metadata_file": "metadata.parquet",
     }
-    with open(os.path.join(args.output_dir, "manifest.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(output_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=True, indent=2)
 
     return 0

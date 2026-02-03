@@ -6,5 +6,6 @@ __all__ = [
     "io",
     "model",
     "openai_backend",
+    "paths",
     "query_ann_index",
 ]

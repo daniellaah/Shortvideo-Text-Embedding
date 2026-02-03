@@ -16,8 +16,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--output",
-        required=True,
-        help="Output path (.parquet preferred; .npy also supported).",
+        default="",
+        help="Output path (.parquet preferred; .npy also supported). If omitted, auto-uses output/models/<model>/embeddings/.",
+    )
+    p.add_argument(
+        "--output_root",
+        default="output/models",
+        help="Root output directory used when --output is omitted (default: output/models).",
+    )
+    p.add_argument(
+        "--output_format",
+        default="parquet",
+        choices=["parquet", "npy"],
+        help="Output extension used when --output is omitted (default: parquet).",
+    )
+    p.add_argument(
+        "--dataset_name",
+        default="",
+        help="Optional dataset name for auto output filename when --output is omitted.",
     )
     p.add_argument(
         "--backend",
@@ -80,6 +96,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     from embedding_pipeline.data import count_rows, load_texts
     from embedding_pipeline.io import make_writer
     from embedding_pipeline.model import build_model, resolve_device
+    from embedding_pipeline.paths import default_embedding_output_path
 
     cleaning_rules = None
     if args.clean:
@@ -94,6 +111,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     else:
         log.info("Backend openai selected (device flag ignored).")
 
+    model_name_for_path = args.model if args.backend == "local" else args.openai_model
+    output_path = args.output or default_embedding_output_path(
+        output_root=args.output_root,
+        model_name=model_name_for_path,
+        input_path=args.input,
+        extension=args.output_format,
+        dataset_name=args.dataset_name,
+    )
+
     total_rows = count_rows(
         args.input,
         chunksize=args.chunksize,
@@ -102,8 +128,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         id_col=args.id_col,
     )
     log.info("Input rows: %d", total_rows)
+    log.info("Output path: %s", output_path)
 
-    writer = make_writer(args.output, total_rows=total_rows)
+    writer = make_writer(output_path, total_rows=total_rows)
 
     model = None
     openai_backend = None
@@ -135,7 +162,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         # Still create an empty output file with the correct schema/shape.
         writer.init_if_needed(embedding_dim=embed_dim, has_ids=False)
         writer.close()
-        log.info("Done. rows=0 dim=%d output=%s seconds=%.2f", embed_dim, args.output, time.time() - t0)
+        log.info("Done. rows=0 dim=%d output=%s seconds=%.2f", embed_dim, output_path, time.time() - t0)
         return 0
 
     with tqdm(total=total_rows, desc="Encoding", unit="rows") as pbar:
@@ -178,7 +205,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "Done. rows=%d dim=%s output=%s seconds=%.2f",
         written,
         embed_dim,
-        args.output,
+        output_path,
         dt,
     )
     return 0

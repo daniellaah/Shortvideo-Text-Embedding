@@ -36,11 +36,12 @@ python main.py \
   --input /path/to/categories_cn_en.csv \
   --text_col category_name_en \
   --id_col category_id \
-  --output output/embeddings/category_name_en_bge.parquet \
   --backend local \
   --model BAAI/bge-m3 \
   --batch_size 128
 ```
+
+Writes to `output/models/bge-m3/embeddings/categories_cn_en.parquet`.
 
 ### 2) OpenAI embedding
 
@@ -50,35 +51,49 @@ python main.py \
   --input /path/to/categories_cn_en.csv \
   --text_col category_name_en \
   --id_col category_id \
-  --output output/embeddings/category_name_en_openai.parquet \
   --backend openai \
   --openai_model text-embedding-3-small \
   --dimensions 1024
 ```
+
+Writes to `output/models/text-embedding-3-small/embeddings/categories_cn_en.parquet`.
 
 ### 2b) Local embedding from headerless TSV (`id<TAB>text`)
 
 ```bash
 python main.py \
   --input /path/to/title_en.tsv \
-  --output output/embeddings/title_en_bge.parquet \
   --backend local \
   --model BAAI/bge-m3
 ```
+
+Writes to `output/models/bge-m3/embeddings/title_en.parquet`.
 
 ### 3) Build and query ANN index
 
 ```bash
 python -m embedding_pipeline.build_ann_index \
-  --input output/embeddings/category_name_en_bge.parquet \
-  --output-dir output/ann_index/category_name_en_bge_index
+  --input output/models/bge-m3/embeddings/categories_cn_en.parquet
 
 python -m embedding_pipeline.query_ann_index \
-  --index-dir output/ann_index/category_name_en_bge_index \
-  --embedding-parquet output/embeddings/category_name_en_bge.parquet \
+  --index-dir output/models/bge-m3/ann_index/categories_cn_en_index \
+  --embedding-parquet output/models/bge-m3/embeddings/categories_cn_en.parquet \
   --embedding-index-id 0 \
   --topk 5
 ```
+
+## Output Layout
+
+When `--output` (for `main.py`) or `--output-dir` (for ANN build) is omitted, artifacts are auto-organized as:
+
+- `output/models/<model>/embeddings/<dataset>.parquet` (or `.npy`)
+- `output/models/<model>/ann_index/<dataset>_index/`
+
+Examples:
+- `output/models/bge-m3/embeddings/title_en.parquet`
+- `output/models/bge-m3/ann_index/title_en_index/`
+- `output/models/text-embedding-3-small/embeddings/title_en.parquet`
+- `output/models/text-embedding-3-small/ann_index/title_en_index/`
 
 ## Input Formats
 
@@ -149,5 +164,5 @@ python main.py --input ... --output ... --model models/bge-m3 --local_files_only
 
 ```bash
 python tests/smoke_test.py
-python -m pytest -q tests/test_data_loader.py tests/test_openai_backend.py
+python -m pytest -q tests/test_data_loader.py tests/test_paths.py tests/test_openai_backend.py
 ```
