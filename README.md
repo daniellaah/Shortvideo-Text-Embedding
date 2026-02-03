@@ -77,41 +77,31 @@ python -m embedding_pipeline.query_ann_index \
 
 ## Tools (`tools/`)
 
-`tools/` provides quick sampling scripts to sanity-check ANN quality after index build.
+`tools/` provides a quick sampler to sanity-check ANN quality after index build.
 
-### `sample_ann_neighbors.py` (video-style output)
+### `sample_ann_neighbors.py`
 
-- Randomly samples query items from an ANN index
-- Reads vectors from the embeddings parquet
-- Prints neighbors with `video_id`, score, and dataset video URL
+Use `--mode` to choose output style:
+- `video`: print `video_id`, score, and dataset video URL
+- `text`: print `video_id (video_title)` with score
 
-```bash
-python tools/sample_ann_neighbors.py \
-  --index-dir output/models/bge-m3/ann_index/title_en_index \
-  --embeddings-parquet output/models/bge-m3/embeddings/title_en.parquet \
-  --n 5 \
-  --k 10
-```
-
-### `sample_ann_neighbors_text.py` (text-style output)
-
-- Same sampling flow, but prints `video_id (video_title)`
-- Useful for `category_combo_*.tsv` style indexes
-- Requires `video_title` to exist in `metadata.parquet`
+Video-style example:
 
 ```bash
-python tools/sample_ann_neighbors_text.py \
-  --index-dir output/models/bge-m3/ann_index/category_combo_cn_index \
-  --embeddings-parquet output/models/bge-m3/embeddings/category_combo_cn.parquet \
-  --n 5 \
-  --k 10
+python tools/sample_ann_neighbors.py   --mode video   --index-dir output/models/bge-m3/ann_index/title_en_index   --embeddings-parquet output/models/bge-m3/embeddings/title_en.parquet   --n 5   --k 10
 ```
 
-Both scripts also support:
+Text-style example (for category combos):
+
+```bash
+python tools/sample_ann_neighbors.py   --mode text   --index-dir output/models/bge-m3/ann_index/category_combo_cn_index   --embeddings-parquet output/models/bge-m3/embeddings/category_combo_cn.parquet   --n 5   --k 10
+```
+
+Also supports:
 - `--seed` (sampling seed)
 - `--ef-search` (HNSW query breadth)
 - `--include-self` (include the query row in neighbor results)
-
+- `--video-url-prefix` (custom URL prefix for `--mode video`)
 
 ## Output Layout
 

@@ -13,7 +13,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 
-VIDEO_URL_PREFIX = "https://fi.ee.tsinghua.edu.cn/datasets/short-video-dataset/raw_file"
+DEFAULT_VIDEO_URL_PREFIX = "https://fi.ee.tsinghua.edu.cn/datasets/short-video-dataset/raw_file"
 
 
 @dataclass(frozen=True)
@@ -48,17 +48,16 @@ def _load_meta(index_dir: str) -> Tuple[List[str], Optional[List[str]]]:
     titles = None
     if "video_title" in table.column_names:
         titles = [table["video_title"][i].as_py() for i in range(table.num_rows)]
-        titles = ["" if v is None else str(v) for v in titles]
+        titles = ["" if v is None else str(v).strip() for v in titles]
 
     return ids, titles
 
 
-def _video_url(video_id: str) -> str:
-    return f"{VIDEO_URL_PREFIX}/{video_id}.mp4"
+def _video_url(video_id: str, prefix: str) -> str:
+    return f"{prefix}/{video_id}.mp4"
 
 
 def _parquet_rowgroup_offsets(pf: pq.ParquetFile) -> List[int]:
-    # Return prefix sums of row counts per row group.
     offsets = [0]
     s = 0
     for rg in range(pf.num_row_groups):
@@ -68,7 +67,6 @@ def _parquet_rowgroup_offsets(pf: pq.ParquetFile) -> List[int]:
 
 
 def _rowgroup_for_index(offsets: List[int], idx: int) -> int:
-    # offsets: [0, end0, end1, ...]
     lo, hi = 0, len(offsets) - 2
     while lo <= hi:
         mid = (lo + hi) // 2
@@ -88,9 +86,6 @@ def _load_embeddings_for_indices(
     embedding_col: str,
     dim: int,
 ) -> Dict[int, np.ndarray]:
-    """
-    Load only the requested row indices from a parquet file (by reading needed row groups).
-    """
     if not indices:
         return {}
 
@@ -108,7 +103,6 @@ def _load_embeddings_for_indices(
         rel = [i - rg_start for i in abs_indices]
 
         table = pf.read_row_group(rg, columns=[embedding_col])
-        # Take only required rows within this row group.
         take_idx = pa.array(rel, type=pa.int64())
         sub = table.take(take_idx)
         col = sub[embedding_col]
@@ -122,9 +116,15 @@ def _load_embeddings_for_indices(
     return out
 
 
+def _fmt_item(video_id: str, title: str) -> str:
+    if title:
+        return f"{video_id}  ({title})"
+    return video_id
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="Randomly sample n videos and print their top-k nearest neighbors from an ANN index."
+        description="Randomly sample n items and print their top-k nearest neighbors from an ANN index."
     )
     p.add_argument("--index-dir", required=True, help="ANN index dir (contains index.bin, metadata.parquet, manifest.json)")
     p.add_argument(
@@ -132,7 +132,18 @@ def main() -> int:
         default="",
         help="Embeddings parquet used to build the index. If omitted, uses manifest.json 'input'.",
     )
-    p.add_argument("--n", type=int, default=5, help="Number of query videos to sample (default: 5).")
+    p.add_argument(
+        "--mode",
+        default="video",
+        choices=["video", "text"],
+        help="Output style: 'video' (video_id + URL) or 'text' (video_id + video_title).",
+    )
+    p.add_argument(
+        "--video-url-prefix",
+        default=DEFAULT_VIDEO_URL_PREFIX,
+        help="URL prefix for --mode video.",
+    )
+    p.add_argument("--n", type=int, default=5, help="Number of query items to sample (default: 5).")
     p.add_argument("--k", type=int, default=10, help="Top-k neighbors to print per query (default: 10).")
     p.add_argument("--seed", type=int, default=0, help="Random seed (default: 0).")
     p.add_argument("--ef-search", type=int, default=200, help="HNSW ef_search (default: 200).")
@@ -147,6 +158,9 @@ def main() -> int:
         raise FileNotFoundError(f"Embeddings parquet not found: {embeddings_parquet}")
 
     ids, titles = _load_meta(args.index_dir)
+    if args.mode == "text" and titles is None:
+        raise ValueError("metadata.parquet has no 'video_title' column; --mode text requires video_title.")
+
     n_items = len(ids)
     if n_items == 0:
         raise ValueError("metadata.parquet is empty.")
@@ -163,7 +177,6 @@ def main() -> int:
     index.load_index(os.path.join(args.index_dir, "index.bin"))
     index.set_ef(int(args.ef_search))
 
-    # Load query vectors from parquet (by row index).
     vecs = _load_embeddings_for_indices(
         embeddings_parquet,
         picked,
@@ -174,39 +187,47 @@ def main() -> int:
     for qi in picked:
         qid = ids[qi]
         qtitle = titles[qi] if titles is not None else ""
-        qurl = _video_url(qid)
-        header = f"Query: {qid}  {qurl}"
-        if qtitle:
-            header += f"\n  Title: {qtitle}"
-        print(header)
+
+        if args.mode == "video":
+            qurl = _video_url(qid, args.video_url_prefix)
+            header = f"Query: {qid}  {qurl}"
+            if qtitle:
+                header += f"\n  Title: {qtitle}"
+            print(header)
+        else:
+            print(f"Query: {_fmt_item(qid, qtitle)}")
 
         qvec = vecs.get(qi)
         if qvec is None:
             print("  ERROR: missing embedding vector for this query row\n")
             continue
 
-        # Ask for k+1 to compensate for the self-hit.
         want = int(args.k) + 1
         labels, distances = index.knn_query(qvec, k=min(want, n_items))
         labels = labels[0].tolist()
         distances = distances[0].tolist()
 
         shown = 0
-        for rank, (lbl, dist) in enumerate(zip(labels, distances), start=1):
+        for lbl, dist in zip(labels, distances):
             if not args.include_self and int(lbl) == int(qi):
                 continue
+
             vid = ids[int(lbl)]
-            url = _video_url(vid)
+            title = titles[int(lbl)] if titles is not None else ""
             if manifest.space == "cosine":
                 score = 1.0 - float(dist)
             else:
                 score = -float(dist)
-            line = f"  {shown+1:02d}. {vid}  {url}  score={score:.6f}"
-            if titles is not None:
-                t = titles[int(lbl)]
-                if t:
-                    line += f"\n      {t}"
-            print(line)
+
+            if args.mode == "video":
+                url = _video_url(vid, args.video_url_prefix)
+                line = f"  {shown+1:02d}. {vid}  {url}  score={score:.6f}"
+                if title:
+                    line += f"\n      {title}"
+                print(line)
+            else:
+                print(f"  {shown+1:02d}. {_fmt_item(vid, title)}  score={score:.6f}")
+
             shown += 1
             if shown >= int(args.k):
                 break
@@ -217,4 +238,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
