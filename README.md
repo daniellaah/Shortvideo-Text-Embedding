@@ -106,7 +106,7 @@ python data_preprocessing/generate_category_combinations.py \
 ### Merge text files to TSV
 
 ```bash
-bash data_preprocessing/merge_to_tsv.sh \
+python data_preprocessing/merge_to_tsv.py \
   --input_dir /path/to/txt_dir \
   --output data/merged_text.tsv
 ```
