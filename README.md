@@ -1,8 +1,21 @@
-# Text Embedding Pipeline (Local BGE-M3 + Optional OpenAI)
+# Shortvideo-Text-Embedding
 
-Batch embedding pipeline that can run:
-- locally via `BAAI/bge-m3` (sentence-transformers)
-- optionally via OpenAI embeddings (e.g. `text-embedding-3-small`)
+Text embedding pipeline for short-video metadata/text, with:
+- local embeddings via `BAAI/bge-m3` (sentence-transformers)
+- optional OpenAI embeddings (for example `text-embedding-3-small`)
+- optional ANN index build/query via HNSW (`hnswlib`)
+
+## Project Structure
+
+```text
+.
+├── main.py                          # CLI entrypoint for embedding jobs
+├── embedding_pipeline/              # Loaders, model backends, writers, ANN tools
+├── data_preprocessing/              # Data prep scripts
+├── data/                            # Sample data files
+├── tests/                           # Smoke/unit tests
+└── tools/                           # ANN sampling utilities
+```
 
 ## Setup
 
@@ -12,95 +25,117 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Run
+## Quick Start
 
-### Local backend (BGE-M3)
+### 1) Local embedding (BGE-M3)
+
+This uses bundled sample CSV data and writes parquet embeddings:
 
 ```bash
 python main.py \
-  --input data/video_titles.csv \
-  --output output/embeddings/title_embeddings.parquet \
+  --input data/categories_cn_en.csv \
+  --text_col category_name_en \
+  --id_col category_id \
+  --output output/embeddings/category_name_en_bge.parquet \
   --backend local \
-  --model models/bge-m3 \
+  --model BAAI/bge-m3 \
   --batch_size 128
 ```
 
-### OpenAI backend (API)
+### 2) OpenAI embedding
 
 ```bash
 export OPENAI_API_KEY="..."
 python main.py \
-  --input data/video_titles.csv \
-  --output output/embeddings/title_embeddings_openai.parquet \
+  --input data/categories_cn_en.csv \
+  --text_col category_name_en \
+  --id_col category_id \
+  --output output/embeddings/category_name_en_openai.parquet \
   --backend openai \
   --openai_model text-embedding-3-small \
-  --dimensions 1024 \
-  --batch_size 128
+  --dimensions 1024
 ```
 
-### Directory input (`.txt` files)
-
-This repo includes example directories `asr_en/` and `title_en/` (each file is one row).
+### 3) Build and query ANN index
 
 ```bash
-python main.py \
-  --input title_en \
-  --output output/embeddings/title_en_embeddings.parquet \
-  --backend local \
-  --model models/bge-m3 \
-  --local_files_only
+python -m embedding_pipeline.build_ann_index \
+  --input output/embeddings/category_name_en_bge.parquet \
+  --output-dir output/ann_index/category_name_en_bge_index
+
+python -m embedding_pipeline.query_ann_index \
+  --index-dir output/ann_index/category_name_en_bge_index \
+  --embedding-parquet output/embeddings/category_name_en_bge.parquet \
+  --embedding-index-id 0 \
+  --topk 5
 ```
 
-## Smoke Test (No Model Download)
+## Input Formats
 
-If you want to validate the pipeline I/O + batching without downloading a model, run:
+`main.py` supports:
+- CSV input with a text column (`--text_col`, default `video_title`)
+- optional ID column (`--id_col`, default `video_id`)
+- directory input where each `.txt` file is one row (ID from file stem)
+
+Note: `data/title_en.txt` and `data/category_combo_cn.tsv` are TSV-like exports, not headered CSV files. Convert/reformat if you want to use them directly with `main.py`.
+
+## Data Preprocessing
+
+### Generate category combo table
+
+Produces a single 2-column TSV file:
+- column 1: `combo_id` (`cat1_cat2_cat3`)
+- column 2: `combo_name` (`cat1 > cat2 > cat3`)
 
 ```bash
-python tests/smoke_test.py
+python data_preprocessing/generate_category_combinations.py \
+  --input_file data/categories_cn_en.csv \
+  --output_file data/category_combo_en.tsv \
+  --name_col category_name_en
 ```
 
-## Input
-
-- CSV with required column `video_title` (override with `--text_col`)
-- Optional column `video_id` (override with `--id_col`)
-- Or a directory of `.txt` files (one file = one text row)
-
-## Output
-
-- Preferred: `.parquet` with columns: `video_id` (if present), `video_title`, `embedding` (list[float])
-- Also supported: `.npy` dense matrix of shape `(N, dim)` (row order matches input)
-
-## Device strategy
-
-- `--device auto` (default): use MPS if available, otherwise CPU
-- If MPS hits a runtime error during encoding, the pipeline falls back to CPU and retries that batch.
-
-## ANN index (optional)
-
-Build an HNSW index from an embeddings parquet:
+Use Chinese category names instead:
 
 ```bash
-python -m embedding_pipeline.build_ann_index --input output/embeddings/title_embeddings.parquet --output-dir output/ann_index/run_001
-python -m embedding_pipeline.query_ann_index --index-dir output/ann_index/run_001 --embedding-parquet output/embeddings/title_embeddings.parquet --embedding-index-id 0 --topk 5
+python data_preprocessing/generate_category_combinations.py \
+  --input_file data/categories_cn_en.csv \
+  --output_file data/category_combo_cn.tsv \
+  --name_col category_name_cn
 ```
 
-## Offline notes (no external APIs)
+### Merge text files to TSV
 
-Local backend does not call any hosted embedding APIs.
+```bash
+bash data_preprocessing/merge_to_tsv.sh \
+  --input_dir /path/to/txt_dir \
+  --output data/merged_text.tsv
+```
 
-Model weights must be present locally (Hugging Face cache) for fully offline runs.
-To enforce offline behavior, you can set:
+## Output Formats
+
+- `.parquet` (recommended): columns include `video_title`, `embedding`, and optional `video_id`
+- `.npy`: dense matrix `(N, dim)` only (row order matches input; metadata not stored)
+
+## Device and Offline Notes
+
+- `--device auto` uses MPS when available, else CPU
+- local backend can run fully offline if model is already cached
 
 ```bash
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 ```
 
-If the model is not cached yet, download it once beforehand (while online) and then rerun offline.
-
-You can also download into a local folder and point `--model` to that path:
+Optional one-time model download:
 
 ```bash
 huggingface-cli download BAAI/bge-m3 --local-dir models/bge-m3
 python main.py --input ... --output ... --model models/bge-m3 --local_files_only
+```
+
+## Tests
+
+```bash
+python tests/smoke_test.py
+python -m pytest -q tests/test_openai_backend.py
 ```

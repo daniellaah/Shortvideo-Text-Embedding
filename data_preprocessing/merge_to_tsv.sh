@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Merge per-video text files (ASR/title/etc.) into a single TSV:
-#   video_id<TAB>asr_text
+#   video_id<TAB>text
 #
 # Input directory:
 #   defaults to /Users/daboluo/OpenSourceData/short-video-dataset/asr_en
@@ -22,17 +22,17 @@ set -euo pipefail
 usage() {
   cat >&2 <<'USAGE'
 Usage:
-  bash data/preprocessing/merge_asr_en_to_tsv.sh [--input_dir DIR] [--output PATH] [--limit N]
+  bash data_preprocessing/merge_to_tsv.sh [--input_dir DIR] [--output PATH] [--limit N]
 
 Examples:
   # ASR (default input dir, default output)
-  bash data/preprocessing/merge_asr_en_to_tsv.sh
+  bash data_preprocessing/merge_to_tsv.sh
 
   # Title_en directory -> data/title_en.txt
-  bash data/preprocessing/merge_asr_en_to_tsv.sh --input_dir /Users/daboluo/OpenSourceData/short-video-dataset/title_en/title_en
+  bash data_preprocessing/merge_to_tsv.sh --input_dir /Users/daboluo/OpenSourceData/short-video-dataset/title_en/title_en
 
   # Quick test on first 10 files
-  bash data/preprocessing/merge_asr_en_to_tsv.sh --limit 10
+  bash data_preprocessing/merge_to_tsv.sh --limit 10
 USAGE
 }
 
@@ -100,7 +100,7 @@ names.sort(key=natural_key)
 if limit > 0:
     names = names[:limit]
 
-os.makedirs(os.path.dirname(output_path), exist_ok=True)
+os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
 ws = re.compile(r"\\s+")
 
