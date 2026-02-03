@@ -27,60 +27,91 @@ pip install -r requirements.txt
 
 ## Quick Start
 
-### 1) Local embedding (BGE-M3)
+### 1) Prepare `id<TAB>text` input (recommended)
 
-Example with a headered CSV file:
+Example: merge text files into one TSV.
+
+```bash
+python data_preprocessing/merge_to_tsv.py \
+  --input_dir /path/to/txt_dir \
+  --output data/title_en.tsv
+```
+
+### 2) Local embedding (BGE-M3)
 
 ```bash
 python main.py \
-  --input /path/to/categories_cn_en.csv \
-  --text_col category_name_en \
-  --id_col category_id \
+  --input data/title_en.tsv \
   --backend local \
-  --model BAAI/bge-m3 \
+  --model /Users/daboluo/OpenSourceModels/bge-m3 \
   --batch_size 128
 ```
 
-Writes to `output/models/bge-m3/embeddings/categories_cn_en.parquet`.
+Writes to `output/models/bge-m3/embeddings/title_en.parquet`.
 
-### 2) OpenAI embedding
+### 3) OpenAI embedding
 
 ```bash
 export OPENAI_API_KEY="..."
 python main.py \
-  --input /path/to/categories_cn_en.csv \
-  --text_col category_name_en \
-  --id_col category_id \
+  --input data/title_en.tsv \
   --backend openai \
   --openai_model text-embedding-3-small \
   --dimensions 1024
 ```
 
-Writes to `output/models/text-embedding-3-small/embeddings/categories_cn_en.parquet`.
+Writes to `output/models/text-embedding-3-small/embeddings/title_en.parquet`.
 
-### 2b) Local embedding from headerless TSV (`id<TAB>text`)
-
-```bash
-python main.py \
-  --input /path/to/title_en.tsv \
-  --backend local \
-  --model BAAI/bge-m3
-```
-
-Writes to `output/models/bge-m3/embeddings/title_en.parquet`.
-
-### 3) Build and query ANN index
+### 4) Build and query ANN index
 
 ```bash
 python -m embedding_pipeline.build_ann_index \
-  --input output/models/bge-m3/embeddings/categories_cn_en.parquet
+  --input output/models/bge-m3/embeddings/title_en.parquet
 
 python -m embedding_pipeline.query_ann_index \
-  --index-dir output/models/bge-m3/ann_index/categories_cn_en_index \
-  --embedding-parquet output/models/bge-m3/embeddings/categories_cn_en.parquet \
+  --index-dir output/models/bge-m3/ann_index/title_en_index \
+  --embedding-parquet output/models/bge-m3/embeddings/title_en.parquet \
   --embedding-index-id 0 \
   --topk 5
 ```
+
+## Tools (`tools/`)
+
+`tools/` provides quick sampling scripts to sanity-check ANN quality after index build.
+
+### `sample_ann_neighbors.py` (video-style output)
+
+- Randomly samples query items from an ANN index
+- Reads vectors from the embeddings parquet
+- Prints neighbors with `video_id`, score, and dataset video URL
+
+```bash
+python tools/sample_ann_neighbors.py \
+  --index-dir output/models/bge-m3/ann_index/title_en_index \
+  --embeddings-parquet output/models/bge-m3/embeddings/title_en.parquet \
+  --n 5 \
+  --k 10
+```
+
+### `sample_ann_neighbors_text.py` (text-style output)
+
+- Same sampling flow, but prints `video_id (video_title)`
+- Useful for `category_combo_*.tsv` style indexes
+- Requires `video_title` to exist in `metadata.parquet`
+
+```bash
+python tools/sample_ann_neighbors_text.py \
+  --index-dir output/models/bge-m3/ann_index/category_combo_cn_index \
+  --embeddings-parquet output/models/bge-m3/embeddings/category_combo_cn.parquet \
+  --n 5 \
+  --k 10
+```
+
+Both scripts also support:
+- `--seed` (sampling seed)
+- `--ef-search` (HNSW query breadth)
+- `--include-self` (include the query row in neighbor results)
+
 
 ## Output Layout
 
@@ -98,13 +129,12 @@ Examples:
 ## Input Formats
 
 `main.py` supports:
-- headered CSV input with a text column (`--text_col`, default `video_title`)
-- headered TSV input with the same column rules
-- headerless TSV/TXT input with exactly 2 columns: `id<TAB>text`
-- optional ID column for headered files (`--id_col`, default `video_id`)
-- directory input where each `.txt` file is one row (ID from file stem)
+- headered CSV with required `video_title` column and optional `video_id`
+- headered TSV/TXT with the same column names
+- headerless TSV/TXT with exactly 2 columns: `id<TAB>text`
+- directory input where each `.txt` file is one row (ID from filename stem)
 
-Headerless 2-column `id<TAB>text` files (for example `title_en.tsv`, `category_combo_cn.tsv`) are supported directly.
+For this pipeline, the recommended format is headerless `id<TAB>text` (for example `title_en.tsv`, `category_combo_cn.tsv`).
 
 ## Data Preprocessing
 
